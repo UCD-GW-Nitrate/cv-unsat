@@ -49,11 +49,12 @@ figure()
 clf
 histogram(Rch_2000, 100, 'Normalization','probability','EdgeColor','none','DisplayName','Spring 2000')
 hold on
-histogram(Rch_2015, 100, 'Normalization','probability','EdgeColor','none','DisplayName','Spring 2000')
+histogram(Rch_2015, 100, 'Normalization','probability','EdgeColor','none','DisplayName','Spring 2015')
 xlim([0 2000])
 legend('Location','northeast')
 grid on
 xlabel('Groundwater Recharge [mm/year]')
 ylabel('%')
+% print -dpng -r300 RchHist
 
 
