@@ -95,5 +95,174 @@ The histogram of groundwater recharge for the two time periods is show below
 
 ---------
 ## Depth to groundwater table
-For the depth to water table we rely primarily on water level measurments. We provide in this repository the processed data as spreadsheets. The original data are coming from DWR.
+### Prepare the measures water level data
+For the depth to water table we rely on water level measurments. The data we use in the following can be found under our [cv unsat data folder](https://ucdavis.box.com/s/2sgyg7gc7kaem01j0olpumm6xml7h7ji). These are processed data. The original data were obtained by DWR.
+```
+gwl_data1 = readtable('gwl_file_part_1.xlsx');
+gwl_data2 = readtable('gwl_file_part_2.xlsx');
+gwl_data3 = readtable('gwl_file_part_3.xlsx');
+```
+Join the three tables but keep only the data we need 
+```
+columns_to_keep = ["Var2","Var4","Var5","Var6","Var7","Var8"];
+gwl_data = [gwl_data1(:,columns_to_keep) 
+    gwl_data2(:,columns_to_keep)
+    gwl_data3(:,columns_to_keep)];
+gwl_data.Properties.VariableNames = {'Section', 'Date','Var5','Var6','Var7','Var8'};
+gwl_data.Section = categorical(gwl_data.Section);
+```
+Keep the data of spring 2000 and 2015
+```
+gwl_data = gwl_data((gwl_data.Date >= datetime(2000,2,1) & gwl_data.Date <= datetime(2000,5,31)) | ...
+                    (gwl_data.Date >= datetime(2015,2,1) & gwl_data.Date <= datetime(2015,5,31)),:);
+```
+From those fields calculate the depth to groundwater
+```
+gwl_data.DGW = gwl_data.Var8 - (gwl_data.Var5 - gwl_data.Var6);
+gwl_data(:,["Var5","Var6","Var7","Var8"]) = [];
+gwl_data(isnan(gwl_data.DGW),:) = [];
+```
+Read the spreadsheet with the coordinate information
+```
+gst = readtable(fullfile('..','..','Box','cv-unsat','gst_file.xlsx'));
+gst.SITE_CODE = categorical(gst.SITE_CODE);
+```
+Append coordinates to the groundwater level data table
+```
+[Lia, Locb] = ismember(gwl_data.Section, gst.SITE_CODE);
+gwl_data.Lat(Lia) = gst.LATITUDE(Locb(Lia));
+gwl_data.Lon(Lia) = gst.LONGITUDE(Locb(Lia));
+gwl_data = gwl_data(Lia,:);
+```
+For each section it is possible to have multiple well records. Here we isolate a list of unique sections
+```
+trs_unique = unique(gwl_data.Section);
+GWL = table(trs_unique,'VariableNames', {'Section'});
+```
+Loop through the wells and calculate the mean depth for 2000 and 2015
+```
+for ii = 1:size(GWL,1)
+    ind = find(gwl_data.Section == GWL.Section(ii));
+    if ~isempty(ind)
+        GWL.Lat(ii) = gwl_data.Lat(ind(1));
+        GWL.Lon(ii) = gwl_data.Lon(ind(1));
+        % find records for spring 2000
+        iyr = year(gwl_data.Date(ind)) == 2000;
+        GWL.DGW_2000(ii) = mean(gwl_data.DGW(ind(iyr)));
+        % find records for spring 2015
+        iyr = year(gwl_data.Date(ind)) == 2015;
+        GWL.DGW_2015(ii) = mean(gwl_data.DGW(ind(iyr)));
+    end
+end
+```
+Isolate the records that are within the Central Valley. Read the Central Valley shapefile 
+```
+CV_outline = shaperead(fullfile('path','to','gis_data','C2VSim_Outline_3310'));
+```
+Plot all record data
+```
+plot(CV_outline.X, CV_outline.Y)
+[xx,yy] = projfwd(projcrs(3310),GWL.Lat, -GWL.Lon);
+hold on
+plot(xx,yy,'.')
+title('All records')
+hold off
+```
+<img src="AllRecordsMap.png" width="60%">
 
+Remove the wells outside Central Valley
+```
+CV_outline_shape = polyshape(CV_outline.X, CV_outline.Y);
+in_cv = CV_outline_shape.isinterior(xx,yy);
+GWL(~in_cv,:) = [];
+```
+Compare the well records between 2000 and 2015 years
+```
+subplot(1,2,1);
+plot(-GWL.Lon(~isnan(GWL.DGW_2000)), GWL.Lat(~isnan(GWL.DGW_2000)),'.')
+title({'Records with Spring',['2000 DGW (' num2str(sum(~isnan(GWL.DGW_2000))) ')']})
+axis equal
+axis off
+subplot(1,2,2);
+plot(-GWL.Lon(~isnan(GWL.DGW_2015)), GWL.Lat(~isnan(GWL.DGW_2015)),'.')
+title({'Records with Spring',['2015 DGW (' num2str(sum(~isnan(GWL.DGW_2015))) ')']})
+axis equal
+axis off
+```
+<img src="GWLSpringMaps.png" width="60%">
+
+### Condition Simulated data to measured data
+Because the measured data have significant gaps we will use the simulated data which cover the CV however they contain errors. The goal here is to adjust the errors based on the water level measurment data
+
+First read the simulated data. (This is going to take sometime)
+```
+C2VsimHead = readIWFM_headalloutput(fullfile(c2vsim_path,'Results','C2VSimFG_GW_HeadAll.out'), 30179, 4, 505, 1);
+```
+Calculate the simulated average water table for spring 2000 and 2015. 
+The data are in feet therefore we convert the water table elevation in meters.
+```
+sim_wtbl_2000 = 0.3048 * (C2VsimHead{319,2}(:,1) + C2VsimHead{320,2}(:,1) + C2VsimHead{321,2}(:,1))/3;
+sim_wtbl_2015 = 0.3048 * (C2VsimHead{499,2}(:,1) + C2VsimHead{500,2}(:,1) + C2VsimHead{501,2}(:,1))/3;
+```
+To calculate the depth to water we read the C2VSim groundwater surface elevation and convert it to meters
+```
+cv_nodes = readIWFM_Nodes(fullfile(c2vsim_path, 'Preprocessor','C2VSimFG_Nodes.dat'));
+cv_gse = readIWFM_Stratigraphy(fullfile(c2vsim_path,'Preprocessor','C2VSimFG_Stratigraphy.dat'),30179, 4, 105);
+cv_gse = 0.3048 * cv_gse(:,2);
+```
+The simulated depth to groundwater can now be calculated as:
+```
+sim_dgw_2000 = cv_gse - sim_wtbl_2000;
+sim_dgw_2015 = cv_gse - sim_wtbl_2015;
+```
+The simulated and measured data have to be under the same coordinate system. In the following snippet we convert the measurment data from lat long to 3310 and the simulated data from 26910 to 3310
+```
+[GWL.X_3310, GWL.Y_3310] = projfwd(projcrs(3310),GWL.Lat, -GWL.Lon); 
+GWL.DGW_2000 = GWL.DGW_2000*0.3048;
+GWL.DGW_2015 = GWL.DGW_2015*0.3048;
+
+[lat,lon] = projinv(projcrs(26910), [c2vsim_nodes.X]', [c2vsim_nodes.Y]');
+[simX3310, simY3310] = projfwd(projcrs(3310),lat, lon);
+```
+To make the conditioning process easier we will create interpolants for the measured and simulated data
+```
+Fmeas2000 = scatteredInterpolant(GWL.X_3310(~isnan(GWL.DGW_2000)), ...
+    GWL.Y_3310(~isnan(GWL.DGW_2000)), GWL.DGW_2000(~isnan(GWL.DGW_2000)), 'linear', 'nearest');
+Fmeas2015 = scatteredInterpolant(GWL.X_3310(~isnan(GWL.DGW_2015)), ...
+    GWL.Y_3310(~isnan(GWL.DGW_2015)), GWL.DGW_2015(~isnan(GWL.DGW_2015)), 'linear', 'nearest');
+
+Fsim2000 = scatteredInterpolant(simX3310, simY3310, sim_dgw_2000, 'linear', 'nearest');
+Fsim2015 = scatteredInterpolant(simX3310, simY3310, sim_dgw_2015, 'linear', 'nearest');
+```
+### Conditioning steps
+
+1. Calculate the simulated values on the points where we have measurements.
+```
+DGW2000sim = Fsim2000(Fmeas2000.Points(:,1), Fmeas2000.Points(:,2));
+DGW2015sim = Fsim2015(Fmeas2015.Points(:,1), Fmeas2015.Points(:,2));
+```
+2. Create interpolants using the simulated values at the measured locations
+```
+Fmeas2000sim = scatteredInterpolant(Fmeas2000.Points(:,1), Fmeas2000.Points(:,2), DGW2000sim, 'linear','nearest');
+Fmeas2015sim = scatteredInterpolant(Fmeas2015.Points(:,1), Fmeas2015.Points(:,2), DGW2015sim, 'linear','nearest');
+```
+3. Interpolate a simulated DGW on the c2vsim nodes using the measurement points with the simulated interpolated values on them
+```
+SimMeas2000 = Fmeas2000sim(simX3310, simY3310);
+SimMeas2015 = Fmeas2015sim(simX3310, simY3310);
+```
+4. The difference between the actual simulated DGW and the interpolated simulated DGW using the density of the measured data is the interpolation error that an interpolation on measured points would produce 
+```
+measError2000 = Fsim2000.Values - SimMeas2000;
+measError2015 = Fsim2015.Values - SimMeas2015;
+```
+5. Use the actual measurement data to interpolate on the c2vsim nodes
+```
+MeasInterp2000 = Fmeas2000(simX3310, simY3310);
+MeasInterp2015 = Fmeas2015(simX3310, simY3310);
+```
+6. Finaly we correct the interpolation by adding the interpolated error
+```
+DGW2000 = MeasInterp2000 + measError2000;
+DGW2015 = MeasInterp2015 + measError2015;
+```
