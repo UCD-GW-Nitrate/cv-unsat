@@ -91,7 +91,7 @@ Rch_2000 = 1000*365*Rch_2000./ElemArea;
 Rch_2015 = 1000*365*Rch_2015./ElemArea;
 ```
 The histogram of groundwater recharge for the two time periods is show below
-![Histogram of spring groundwater recharge](RchHist.png)
+<img src="RchHist.png" width="60%">
 
 ---------
 ## Depth to groundwater table
@@ -266,3 +266,62 @@ MeasInterp2015 = Fmeas2015(simX3310, simY3310);
 DGW2000 = MeasInterp2000 + measError2000;
 DGW2015 = MeasInterp2015 + measError2015;
 ```
+In the following snippets we prepare a triangulation structure that we use is to visualize the data
+```
+% Triangulate the c2vsim nodes
+DT = delaunayTriangulation(simX3310,simY3310);
+% Calculate the barycenters of the triangles of the triangulation
+bc_tr = zeros(size(DT.ConnectivityList,1),2);
+for ii = 1:3
+    bc_tr = bc_tr + [DT.Points(DT.ConnectivityList(:,ii),1) DT.Points(DT.ConnectivityList(:,ii),2)];
+end
+bc_tr = bc_tr./3;
+% Remove the triangles outside the Central Valley
+in_cv = CV_outline_shape.isinterior(bc_tr(:,1), bc_tr(:,2));
+tr = DT.ConnectivityList(in_cv,:);
+```
+Prepare a few data structures to help with ploting
+```
+tmp2000 = sign(DGW2000).*log10(abs(DGW2000));
+tmp2015 = sign(DGW2015).*log10(abs(DGW2015));
+cmin = min(min(tmp2000),min(tmp2015));
+cmax = max(max(tmp2000),max(tmp2015));
+
+color_res = 512; %Color resolution 
+lcol = linspace(cmin,cmax,color_res)'; 
+id = find(lcol > 0,1)-1; 
+custom_map = [linspace(130, 255, id)' linspace(0, 255, id)' linspace(0, 255, id)'; ...
+              linspace(255, 0,color_res-id)' linspace(255,0,color_res-id)' linspace(255, 130,color_res-id)'];
+```
+Plot the depth to groundwater for Spring 2000 and 2015
+```
+figure()
+clf
+subplot(1,2,1)
+trisurf(tr, simX3310, simY3310, tmp2000,'edgecolor','none');
+clim([cmin cmax]);
+colormap(custom_map./255); 
+view(0,90)
+axis equal
+axis off
+title('Depth to water table - 2000')
+h = colorbar;
+h.Label.String = 'm'; 
+h.TickLabels = cellfun(@num2str, num2cell(10.^h.Ticks),'UniformOutput',false);
+
+subplot(1,2,2)
+trisurf(tr, simX3310, simY3310, tmp2015,'edgecolor','none');
+clim([cmin cmax]);
+colormap(custom_map./255); 
+view(0,90)
+axis equal
+axis off
+title('Depth to water table - 2015')
+h = colorbar;
+h.Label.String = 'm';
+h.TickLabels = cellfun(@num2str, num2cell(10.^h.Ticks),'UniformOutput',false);
+```
+<img src="DGWspringMaps.png" width="70%">
+
+## Calculate Travel time
+To calculate the travel time we will define a $\tau = 0.05$ value and two thresholds
