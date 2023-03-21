@@ -28,8 +28,8 @@ c2vsimRch = DeepPerc + DivLoss + ByPassLoss;
 idx_2000 = find(c2vsimTime == datetime('31-Mar-2000')):find(c2vsimTime == datetime('31-May-2000'));
 idx_2015 = find(c2vsimTime == datetime('31-Mar-2015')):find(c2vsimTime == datetime('31-May-2015'));
 %% Average recharge
-Rch_2000 = (0.3048^3)*sum(c2vsimRch(:,idx_2000),2)./sum(c2vsimTime(idx_2000).Day); %m^3/day
-Rch_2015 = (0.3048^3)*sum(c2vsimRch(:,idx_2015),2)./sum(c2vsimTime(idx_2015).Day); %m^3/day
+RchVol_2000 = (0.3048^3)*sum(c2vsimRch(:,idx_2000),2)./sum(c2vsimTime(idx_2000).Day); %m^3/day
+RchVol_2015 = (0.3048^3)*sum(c2vsimRch(:,idx_2015),2)./sum(c2vsimTime(idx_2015).Day); %m^3/day
 %% Read element area
 %ElemArea = h5read(GBinfo.Filename,...
 %    [GBinfo.Groups(1).Name GBinfo.Name GBinfo.Groups(1).Datasets(12).Name]);
@@ -42,8 +42,8 @@ for ii = 1:length(c2vsim_mesh)
     bc_elem(ii,:) = [mean(c2vsim_mesh(ii,1).X(1:end-2)) mean(c2vsim_mesh(ii,1).Y(1:end-2))];
 end
 %% Calculate recharge rates
-Rch_2000 = 1000*365*Rch_2000./ElemArea;
-Rch_2015 = 1000*365*Rch_2015./ElemArea;
+Rch_2000 = 1000*365*RchVol_2000./ElemArea;
+Rch_2015 = 1000*365*RchVol_2015./ElemArea;
 %% 
 figure()
 clf
@@ -104,7 +104,7 @@ CV_outline = shaperead(fullfile('..','C2VsimV101','gis_data','C2VSim_Outline_331
 %%
 figure()
 clf
-plot(CV_outline.X, CV_outline.Y)
+plot(CV_outline.X, CV_outline.Y,'LineWidth',2)
 [xx,yy] = projfwd(projcrs(3310),GWL.Lat, -GWL.Lon);
 hold on
 plot(xx,yy,'.')
@@ -143,16 +143,16 @@ sim_dgw_2000 = cv_gse - sim_wtbl_2000;
 sim_dgw_2015 = cv_gse - sim_wtbl_2015;
 %%
 [GWL.X_3310, GWL.Y_3310] = projfwd(projcrs(3310),GWL.Lat, -GWL.Lon); 
-GWL.DGW_2000 = GWL.DGW_2000*0.3048;
-GWL.DGW_2015 = GWL.DGW_2015*0.3048;
+GWL.DGW_2000_m = GWL.DGW_2000*0.3048;
+GWL.DGW_2015_m = GWL.DGW_2015*0.3048;
 
 [lat,lon] = projinv(projcrs(26910), cv_nodes(:,1), cv_nodes(:,2));
 [simX3310, simY3310] = projfwd(projcrs(3310),lat, lon);
 %%
-Fmeas2000 = scatteredInterpolant(GWL.X_3310(~isnan(GWL.DGW_2000)), ...
-    GWL.Y_3310(~isnan(GWL.DGW_2000)), GWL.DGW_2000(~isnan(GWL.DGW_2000)), 'linear', 'nearest');
-Fmeas2015 = scatteredInterpolant(GWL.X_3310(~isnan(GWL.DGW_2015)), ...
-    GWL.Y_3310(~isnan(GWL.DGW_2015)), GWL.DGW_2015(~isnan(GWL.DGW_2015)), 'linear', 'nearest');
+Fmeas2000 = scatteredInterpolant(GWL.X_3310(~isnan(GWL.DGW_2000_m)), ...
+    GWL.Y_3310(~isnan(GWL.DGW_2000_m)), GWL.DGW_2000(~isnan(GWL.DGW_2000_m)), 'linear', 'nearest');
+Fmeas2015 = scatteredInterpolant(GWL.X_3310(~isnan(GWL.DGW_2015_m)), ...
+    GWL.Y_3310(~isnan(GWL.DGW_2015_m)), GWL.DGW_2015(~isnan(GWL.DGW_2015_m)), 'linear', 'nearest');
 
 Fsim2000 = scatteredInterpolant(simX3310, simY3310, sim_dgw_2000, 'linear', 'nearest');
 Fsim2015 = scatteredInterpolant(simX3310, simY3310, sim_dgw_2015, 'linear', 'nearest');
@@ -222,3 +222,77 @@ h.Label.String = 'm';
 h.TickLabels = cellfun(@num2str, num2cell(10.^h.Ticks),'UniformOutput',false);
 % print -dpng -r300 DGWspringMaps
 %%
+theta = 0.05;
+rch_threshold = 10; %mm/year
+depth_threshold = 1; %m;
+%%
+ElemNodeAreas = h5read(GBinfo.Filename, [GBinfo.Groups(1).Name GBinfo.Name GBinfo.Groups(1).Datasets(16).Name])';
+ElemNodeFractions = ElemNodeAreas./sum(ElemNodeAreas,2);
+ElemNodes = h5read(GBinfo.Filename, [GBinfo.Groups(1).Name GBinfo.Name GBinfo.Groups(1).Datasets(17).Name])';
+NodeIds = unique(ElemNodes);
+NodeIds(NodeIds == 0,:) = [];
+%%
+Rch_nodesVol_2000 = nan(length(NodeIds),1);
+Rch_nodesVol_2015 = nan(length(NodeIds),1);
+area_nodes = nan(length(NodeIds),1);
+for ii = 1:length(NodeIds)
+    [II, JJ] = find(ElemNodes == NodeIds(ii));
+    irchVol2000 = 0;
+    irchVol2015 = 0;
+    iarea = 0;
+    for j = 1:length(II)
+        irchVol2000 = irchVol2000 + RchVol_2000(II(j))*ElemNodeFractions(II(j), JJ(j));
+        irchVol2015 = irchVol2015 + RchVol_2015(II(j))*ElemNodeFractions(II(j), JJ(j));
+        iarea = iarea + ElemArea(II(j))*ElemNodeFractions(II(j), JJ(j));
+    end
+    Rch_nodesVol_2000(NodeIds(ii),1) = irchVol2000;
+    Rch_nodesVol_2015(NodeIds(ii),1) = irchVol2015;
+    area_nodes(NodeIds(ii),1) = iarea;
+end
+Rch_nodes_2000 = 1000*365*Rch_nodesVol_2000./area_nodes;
+Rch_nodes_2015 = 1000*365*Rch_nodesVol_2015./area_nodes;
+%%
+tau_2000 = theta.* max(DGW2000, depth_threshold)./ (max(rch_threshold, Rch_nodes_2000)/1000);
+tau_2015 = theta.* max(DGW2015, depth_threshold)./ (max(rch_threshold, Rch_nodes_2015)/1000);
+%%
+clf
+[f, x] = ecdf(log10(tau_2000));
+plot(x,f, 'DisplayName', 'Spring 2000','LineWidth',2)
+hold on
+[f, x] = ecdf(log10(tau_2015));
+plot(x,f, 'DisplayName', 'Spring 2015','LineWidth',2)
+xlabel('Travel time [years]')
+hold off
+legend('Location','northwest')
+grid on
+xticklabels(cellfun(@num2str, num2cell(10.^xticks),'UniformOutput',false))
+% print -dpng -r300 ECDFtravelTime
+%%
+cmin = min(min(log10(tau_2000)),min(log10(tau_2015)));
+cmax = max(max(log10(tau_2000)),max(log10(tau_2015)));
+figure()
+clf
+subplot(1,2,1)
+trisurf(tr, simX3310, simY3310, log10(tau_2000),'edgecolor','none');
+clim([cmin cmax]);
+view(0,90)
+axis equal
+axis off
+title('Travel time Spring 2000')
+colormap parula
+h = colorbar;
+h.Label.String = 'Years'; 
+h.TickLabels = cellfun(@num2str, num2cell(10.^h.Ticks),'UniformOutput',false);
+
+subplot(1,2,2)
+trisurf(tr, simX3310, simY3310, log10(tau_2015),'edgecolor','none');
+clim([cmin cmax]);
+view(0,90)
+axis equal
+axis off
+title('Travel time Spring 2015')
+colormap parula
+h = colorbar;
+h.Label.String = 'Years'; 
+h.TickLabels = cellfun(@num2str, num2cell(10.^h.Ticks),'UniformOutput',false);
+% print -dpng -r300 TravelTimeMaps

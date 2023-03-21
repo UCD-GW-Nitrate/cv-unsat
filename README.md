@@ -67,8 +67,8 @@ idx_2015 = find(c2vsimTime == datetime('31-Mar-2015')):find(c2vsimTime == dateti
 ```
 The units of recharge in the hdf output files are in `cuft/month`. Here we calculate the total amount of spring recharge and divide it by the numbers of spring days and convert it to meter so the units now are `m^3/day`.
 ```
-Rch_2000 = (0.3048^3)*sum(c2vsimRch(:,idx_2000),2)./sum(c2vsimTime(idx_2000).Day);
-Rch_2015 = (0.3048^3)*sum(c2vsimRch(:,idx_2015),2)./sum(c2vsimTime(idx_2015).Day)
+RchVol_2000 = (0.3048^3)*sum(c2vsimRch(:,idx_2000),2)./sum(c2vsimTime(idx_2000).Day);
+RchVol_2015 = (0.3048^3)*sum(c2vsimRch(:,idx_2015),2)./sum(c2vsimTime(idx_2015).Day);
 ```
 Finaly to convert the recharge volume to rate we need the area of each element, which we could read from the groundwater zone budget output file
 ```
@@ -87,11 +87,12 @@ end
 ```
 Now we can calculate the recharge rates. Here convert them to `mm/year`
 ```
-Rch_2000 = 1000*365*Rch_2000./ElemArea;
-Rch_2015 = 1000*365*Rch_2015./ElemArea;
+Rch_2000 = 1000*365*RchVol_2000./ElemArea;
+Rch_2015 = 1000*365*RchVol_2015./ElemArea;
 ```
 The histogram of groundwater recharge for the two time periods is show below
 <img src="RchHist.png" width="60%">
+
 
 ---------
 ## Depth to groundwater table
@@ -324,4 +325,83 @@ h.TickLabels = cellfun(@num2str, num2cell(10.^h.Ticks),'UniformOutput',false);
 <img src="DGWspringMaps.png" width="70%">
 
 ## Calculate Travel time
-To calculate the travel time we will define a $\tau = 0.05$ value and two thresholds
+In the previous sections we calculated a map of the depth to groundwater and a map of recharge.
+To calculate the travel time we need to set up $\tau = 0.05$ value.
+However due to simulation errors the $D_{gw}$ and $R$ maps contain values that are not reasonable. For example the depth map contains areas with negative depth. While the water table is very close to groundwater surface in those areas it should not be negative. To handle these situations we set two thresholds. 
+```
+theta = 0.05;
+rch_threshold = 10; %mm/year
+depth_threshold = 1; %m;
+```
+The recharge threshold sets a limit to the minimum recharge rate. Here if the simulated recharge rate is lower than the 10 mm/year then is set equal to 10 mm/year. We also set a minimum depth equal to 1 m.
+
+The depth to groundwater has been calculated at the nodes of the C2VSim mesh, while the recharge was calculated on the mesh elements. To make the two data consistent we will assign the recharge volumes to the element nodes. First we will extract a few data to assist in the process such as the element node ids and the element node area fractions
+```
+ElemNodeAreas = h5read(GBinfo.Filename, [GBinfo.Groups(1).Name GBinfo.Name GBinfo.Groups(1).Datasets(16).Name])';
+ElemNodeFractions = ElemNodeAreas./sum(ElemNodeAreas,2);
+ElemNodes = h5read(GBinfo.Filename, [GBinfo.Groups(1).Name GBinfo.Name GBinfo.Groups(1).Datasets(17).Name])';
+NodeIds = unique(ElemNodes);
+NodeIds(NodeIds == 0,:) = [];
+```
+Then we will loop through each node and calculate the recharge that correspond to that node
+```
+Rch_nodesVol_2000 = nan(length(NodeIds),1);
+Rch_nodesVol_2015 = nan(length(NodeIds),1);
+area_nodes = nan(length(NodeIds),1);
+for ii = 1:length(NodeIds)
+    [II, JJ] = find(ElemNodes == NodeIds(ii));
+    irchVol2000 = 0;
+    irchVol2015 = 0;
+    iarea = 0;
+    for j = 1:length(II)
+        irchVol2000 = irchVol2000 + RchVol_2000(II(j))*ElemNodeFractions(II(j), JJ(j));
+        irchVol2015 = irchVol2015 + RchVol_2015(II(j))*ElemNodeFractions(II(j), JJ(j));
+        iarea = iarea + ElemArea(II(j))*ElemNodeFractions(II(j), JJ(j));
+    end
+    Rch_nodesVol_2000(NodeIds(ii),1) = irchVol2000;
+    Rch_nodesVol_2015(NodeIds(ii),1) = irchVol2015;
+    area_nodes(NodeIds(ii),1) = iarea;
+end
+Rch_nodes_2000 = 1000*365*Rch_nodesVol_2000./area_nodes;
+Rch_nodes_2015 = 1000*365*Rch_nodesVol_2015./area_nodes;
+```
+
+Finally we can calculate the unsaturated travel time 
+```
+tau_2000 = theta.* max(DGW2000, depth_threshold)./ (max(rch_threshold, Rch_nodes_2000)/1000);
+tau_2015 = theta.* max(DGW2015, depth_threshold)./ (max(rch_threshold, Rch_nodes_2015)/1000);
+```
+The empirical cumulative distribution of unsaturated travel time is shown in the folowing plot
+<img src="ECDFtravelTime.png" width="50%">
+
+Last we map the travel time
+```
+cmin = min(min(log10(tau_2000)),min(log10(tau_2015)));
+cmax = max(max(log10(tau_2000)),max(log10(tau_2015)));
+figure()
+clf
+subplot(1,2,1)
+trisurf(tr, simX3310, simY3310, log10(tau_2000),'edgecolor','none');
+clim([cmin cmax]);
+view(0,90)
+axis equal
+axis off
+title('Travel time Spring 2000')
+colormap parula
+h = colorbar;
+h.Label.String = 'Years'; 
+h.TickLabels = cellfun(@num2str, num2cell(10.^h.Ticks),'UniformOutput',false);
+
+subplot(1,2,2)
+trisurf(tr, simX3310, simY3310, log10(tau_2015),'edgecolor','none');
+clim([cmin cmax]);
+view(0,90)
+axis equal
+axis off
+title('Travel time Spring 2015')
+colormap parula
+h = colorbar;
+h.Label.String = 'Years'; 
+h.TickLabels = cellfun(@num2str, num2cell(10.^h.Ticks),'UniformOutput',false);
+```
+<img src="TravelTimeMaps.png" width="70%">
