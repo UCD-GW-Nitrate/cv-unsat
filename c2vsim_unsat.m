@@ -130,7 +130,11 @@ axis equal
 axis off
 % print -dpng -r300 GWLSpringMaps
 %%
-C2VsimHead = readIWFM_headalloutput(fullfile(c2vsim_path,'Results','C2VSimFG_GW_HeadAll.out'), 30179, 4, 505, 1);
+% C2VsimHead = readIWFM_headalloutput(fullfile(c2vsim_path,'Results','C2VSimFG_GW_HeadAll.out'), 30179, 4, 505, 1);
+% or load the head from a previous save
+load(fullfile(c2vsim_path,"GW_Heads.mat"));
+C2VsimHead = Heads;
+clear Heads
 %%
 sim_wtbl_2000 = 0.3048 * (C2VsimHead{319,2}(:,1) + C2VsimHead{320,2}(:,1) + C2VsimHead{321,2}(:,1))/3;
 sim_wtbl_2015 = 0.3048 * (C2VsimHead{499,2}(:,1) + C2VsimHead{500,2}(:,1) + C2VsimHead{501,2}(:,1))/3;
@@ -251,6 +255,8 @@ for ii = 1:length(NodeIds)
 end
 Rch_nodes_2000 = 1000*365*Rch_nodesVol_2000./area_nodes;
 Rch_nodes_2015 = 1000*365*Rch_nodesVol_2015./area_nodes;
+%% Save the depth and recharge variables
+save('CV_UNSAT_VAR','simX3310', 'simY3310', 'DGW2000', 'DGW2015', 'Rch_nodes_2000', 'Rch_nodes_2015');
 %%
 tau_2000 = theta.* max(DGW2000, depth_threshold)./ (max(rch_threshold, Rch_nodes_2000)/1000);
 tau_2015 = theta.* max(DGW2015, depth_threshold)./ (max(rch_threshold, Rch_nodes_2015)/1000);
